@@ -26,7 +26,7 @@
  *  has at most degree 20. But this can be adjusted by
  *  resetting constants MAXDEGREE, MAXSIZE and MAXEDGE
  */
-#include <stdio.h> 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <limits.h>		/* for CHAR_BIT */
@@ -991,32 +991,40 @@ int Is_Stable(struct arb_tnode *comp_ptr, int node_type[], int inner_flag[],
 	}
 }
 
-int Find_UnStable(struct arb_tnode *comp_ptr, int node_type[], int inner_flag[],
+void Find_UnStable(struct arb_tnode *comp_ptr,int input_leaves[], int no_leaf, int unstb_rets_in[], int *no_rets_in,
+		int unstb_rets_out[], int *no_rets_out, int node_type[], int inner_flag[],
 		int lf_below[]) {
 	int i, deg, x;
 
 	if (comp_ptr == NULL)
-		return -1;
+		return;
 	else {
 		if (node_type[comp_ptr->label] == LEAVE)
-			return comp_ptr->label;
+			return;
 		else if (node_type[comp_ptr->label] == RET) {
-			if (inner_flag[comp_ptr->label] == CROSS
-					&& lf_below[comp_ptr->label] >= 0)
-				return comp_ptr->label;
+			if (inner_flag[comp_ptr->label] == CROSS){
+				int leaf = lf_below[comp_ptr->label];
+				if (Is_In(leaf, input_leaves, no_leaf)==1){
+					unstb_rets_in[*no_rets_in]=comp_ptr->label;
+					*no_rets_in = *no_rets_in+1;
+				}
+				else{
+					unstb_rets_out[*no_rets_out]=comp_ptr->label;
+					*no_rets_out=*no_rets_out+1;
+				}
+			}
 		} else if (node_type[comp_ptr->label] == TREE
 				|| node_type[comp_ptr->label] == ROOT) {
 			deg = comp_ptr->no_children;
 			for (i = 0; i < deg; i++) {
-				x = Find_UnStable((comp_ptr->child)[i], node_type, inner_flag,
+				Find_UnStable((comp_ptr->child)[i], input_leaves, no_leaf, unstb_rets_in, no_rets_in, unstb_rets_out, no_rets_out, node_type, inner_flag,
 						lf_below);
-				if (x >= 0)
-					return x;
 			}
 		}
-		return -1;
+		return;
 	}
 }
+
 
 struct arb_tnode *Make_ArbTree_Copy(struct arb_tnode *tree) {
 	struct arb_tnode *ptr;
@@ -1592,14 +1600,25 @@ int Cluster_Containment(struct components *ptr, int r_nodes[], int n_r,
 			}
 		} else {
 			//printf("   Unstable case:\n");
-			unstb_ret = Find_UnStable(p->tree_com, node_type, inner_flag,
-					lf_below);
+			int no_rets_in = 0;
+			int no_rets_out = 0;
+			int *unstb_rets_in = (int *) calloc(n_r, sizeof(int));
+			int *unstb_rets_out = (int *) calloc(n_r, sizeof(int));
 
-			if (unstb_ret >= 0) {
+			Find_UnStable(p->tree_com, input_leaves, no1, unstb_rets_in, &no_rets_in,
+							unstb_rets_out, &no_rets_out, node_type, inner_flag, lf_below);
+
+			// printf("   no_rets_in: %d; no_rets_out: %d\n", no_rets_in,
+			// 		no_rets_out);
+
+			if (no_rets_in > 0 || no_rets_out > 0) {
 				whole_copy = Make_Current_Network(cps);
 				p1 = whole_copy;
 				while (p1->ret_node != p->ret_node)
 					p1 = p1->next;
+
+				// printf("  original network 1: %s \n");
+				// Print_Comp_Revised(p->tree_com, node_strings);
 
 				lf_below1 = (int *) calloc(no_nodes, sizeof(int));
 				inner_flag1 = (int *) calloc(no_nodes, sizeof(int));
@@ -1611,14 +1630,34 @@ int Cluster_Containment(struct components *ptr, int r_nodes[], int n_r,
 					super_deg1[i] = super_deg[i];
 				}
 
-				if (inner_flag[unstb_ret] == CROSS) {
-					inner_flag[unstb_ret] = INNER;
-					inner_flag1[unstb_ret] = REVISED;
-					super_deg1[unstb_ret] = super_deg[unstb_ret] - 1;
-					super_deg[unstb_ret] = 1; /* remove all parents in other comps. */
+				for (i = 0; i < no_rets_in; i++) {
+					unstb_ret = unstb_rets_in[i];
+					// printf("  unstable node to be removed: %s \n", node_strings[unstb_ret]);
+					if (inner_flag[unstb_ret] == CROSS) {
+						inner_flag[unstb_ret] = INNER;
+						inner_flag1[unstb_ret] = REVISED;
+						super_deg1[unstb_ret] = super_deg[unstb_ret] - 1; /* exclude current component from new network*/
+						super_deg[unstb_ret] = 1; /* remove all parents in other comps. */
+						if (super_deg1[unstb_ret] == 1) {
+							inner_flag1[unstb_ret] = INNER;
+						}
+					}
+					Modify(p, p1, node_type, unstb_ret);
 				}
 
-				Modify(p, p1, node_type, unstb_ret);
+				for (i = 0; i < no_rets_out; i++) {
+					unstb_ret = unstb_rets_out[i];
+					if (inner_flag[unstb_ret] == CROSS) {
+						inner_flag[unstb_ret] = REVISED;
+						inner_flag1[unstb_ret] = INNER;
+						super_deg[unstb_ret] = super_deg[unstb_ret] - 1;
+						super_deg1[unstb_ret] = 1; /* remove all parents in other comps. */
+						if (super_deg[unstb_ret] == 1) {
+							inner_flag[unstb_ret] = INNER;
+						}
+					}
+					Modify(p1, p, node_type, unstb_ret);
+				}
 
 				*no_break = *no_break + 1;
 
